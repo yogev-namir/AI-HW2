@@ -13,7 +13,7 @@ DEPOSIT_REWARD = 4
 RESET_REWARD = -2
 CONFISCATE_REWARD = -1 
 
-ids = ["111111111", "222222222"]
+ids = ["318880754", "324079763"]
 
 def find_base(map):
     for row_idx, row in enumerate(map):
