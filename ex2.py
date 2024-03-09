@@ -5,7 +5,7 @@ import utils
 ################################
 # TODO: two pirate ships can be in the same location?
 # TODO: two marine ships can be in the same location?
-# TODO: what happends when a pirate ship collects a treasure and a marine ship encounters it?
+# TODO: what happens when a pirate ship collects a treasure and a marine ship encounters it?
 ################################
 EMPTY_SHIP = 2
 
@@ -305,14 +305,6 @@ def possible_next_states(physible_states, initial_state):
 def value_iterations(possible_states, next_actions_dict, next_states_dict, turns_to_go):
     """
     Perform value iteration to find the optimal policy.
-
-    Parameters:
-    - possible_states: a list of all possible states.
-    - next_actions_dict: a dictionary mapping each state to possible actions.
-    - next_states_dict: a dictionary mapping each (state, action) pair to a list of (probability, next_state, reward) tuples.
-    - gamma: the discount factor, a measure of how much future rewards are valued over immediate rewards.
-    - theta: a small threshold determining the accuracy of estimation (stopping condition).
-
     Returns:
     - policy: a dictionary mapping states to the optimal action to take from that state.
     - V: a dictionary of state values.
@@ -344,7 +336,8 @@ class OptimalPirateAgent:
         self.turns_to_go = self.initial['turns to go']
         self.possible_states = assemble_states(self.initial)
         self.next_actions_dict, self.next_states_dict = possible_next_states(self.physible_states, self.initial)
-        self.policy, self.v_star = value_iterations
+        self.policy, self.v_star = value_iterations(self.possible_states, self.next_actions_dict,
+                                                    self.next_states_dict, self.turns_to_go)
 
     def act(self, state):
         raise NotImplemented
