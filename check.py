@@ -62,7 +62,6 @@ class PirateStochasticProblem:
             start = time.perf_counter()
             action = self.agent.act(deepcopy(self.state))
             end = time.perf_counter()
-            print(f"Round took {end - start} seconds")
             if end - start > TURN_TIME_LIMIT:
                 logging.critical(f"timed out on an action")
                 raise TimeoutError

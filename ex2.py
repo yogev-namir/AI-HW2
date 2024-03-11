@@ -8,8 +8,8 @@ import utils
 # TODO: two marine ships can be in the same location?
 # TODO: what happens when a pirate ship collects a treasure and a marine ship encounters it?
 ################################
-EMPTY_SHIP = 2
-
+CAPACITY = 2
+THRESHOLD = 1000000
 DEPOSIT_REWARD = 4
 RESET_REWARD = -2
 CONFISCATE_REWARD = -1 
@@ -61,7 +61,7 @@ def assemble_states(initial):
         for location in non_i_locations:
             # min_capacity = max(0,pirate_ship_details['capacity'] - len(initial_state['treasures']))
             # max_capacity = pirate_ship_details['capacity'] + 1
-            for capacity in range(0, EMPTY_SHIP+1):
+            for capacity in range(0, CAPACITY+1):
                 pirate_ships_states[pirate_ship].append({"location": location,
                                                          "capacity": capacity})
                 
@@ -123,7 +123,7 @@ def check_collect_treasure(current_location, treasures, pirate_ship, capacity):
 
 def check_deposit_treasure(current_location, pirate_ship, capacity, base):
     actions = []
-    if capacity < EMPTY_SHIP and utils.distance(base, current_location) == 0:
+    if capacity < CAPACITY and utils.distance(base, current_location) == 0:
         actions.append(("deposit_treasure", pirate_ship))
     return actions
 
@@ -148,7 +148,7 @@ def deterministic_result_state(current_state, action_tuple):
             result_state['pirate_ships'][pirate_ship]['capacity'] -= 1
 
         else: # action_type == 'deposit_treasure'
-            result_state['pirate_ships'][pirate_ship]['capacity'] = EMPTY_SHIP
+            result_state['pirate_ships'][pirate_ship]['capacity'] = CAPACITY
 
     # result_state = {"pirate_ships": result_state['pirate_ships']}
     return result_state, reward
@@ -168,15 +168,15 @@ def deterministic_result_and_reward(current_state, action_tuple):
                 location = action[2] if action[0] == 'sail' else current_state['pirate_ships'][pirate_ship]['location']
                 confiscate = int(location in marine_ships_locations)
                 if confiscate:
-                    current_state['pirate_ships'][pirate_ship]['capacity'] = EMPTY_SHIP
+                    current_state['pirate_ships'][pirate_ship]['capacity'] = CAPACITY
                 reward += confiscate * CONFISCATE_REWARD 
 
         elif action[0] == 'collect_treasure':
             result_state['pirate_ships'][pirate_ship]['capacity'] -= 1
 
         elif action[0] == 'deposit_treasure':
-            result_state['pirate_ships'][pirate_ship]['capacity'] = EMPTY_SHIP
-            reward += (EMPTY_SHIP - current_state['pirate_ships'][pirate_ship]['capacity']) * DEPOSIT_REWARD 
+            result_state['pirate_ships'][pirate_ship]['capacity'] = CAPACITY
+            reward += (CAPACITY - current_state['pirate_ships'][pirate_ship]['capacity']) * DEPOSIT_REWARD 
 
     # result_state = {"pirate_ships": result_state['pirate_ships']}
     return result_state, reward
@@ -293,14 +293,14 @@ def calculate_reward_and_apply_action(state, actions_tuple):
         for action in actions_tuple:
             pirate_ship = action[1]
             if action[0] == 'deposit_treasure':  
-                reward += (EMPTY_SHIP - state['pirate_ships'][pirate_ship]['capacity']) * DEPOSIT_REWARD
-                state['pirate_ships'][pirate_ship]['capacity'] = EMPTY_SHIP  
+                reward += (CAPACITY - state['pirate_ships'][pirate_ship]['capacity']) * DEPOSIT_REWARD
+                state['pirate_ships'][pirate_ship]['capacity'] = CAPACITY  
 
             elif action[0] == 'sail' or action[0] == 'wait':
                 location = action[2] if action[0] == 'sail' else state['pirate_ships'][pirate_ship]['location']
                 confiscate = int(location in marine_ships_locations)
                 if confiscate:
-                    state['pirate_ships'][pirate_ship]['capacity'] = EMPTY_SHIP
+                    state['pirate_ships'][pirate_ship]['capacity'] = CAPACITY
                 reward += confiscate * CONFISCATE_REWARD  
     pirate_ships_part = {'pirate_ships': state['pirate_ships']}
     return pirate_ships_part, reward
@@ -403,6 +403,7 @@ def value_iterations(possible_states, next_actions_dict, next_states_dict, turns
 
 class OptimalPirateAgent:
     def __init__(self, initial):
+        calc_total_states(initial)
         self.initial = deepcopy(initial)
         self.turns_to_go = self.initial.pop('turns to go')
         self.possible_states_json, self.possible_states_dict = assemble_states(self.initial)
@@ -417,15 +418,95 @@ class OptimalPirateAgent:
         state_json = json.dumps(state)
         return self.policy[state_json, turn]
 
+def calc_total_states(initial):
+    total_states = 1
+    non_i_locations, i_locations = classify_locations_in_map(initial['map'])
+    
+    # pirate ships states
+    total_states *= len(initial['pirate_ships'].items()) * CAPACITY * len(non_i_locations)
+    
+    # treasures states
+    for _, treasures_details in initial['treasures'].items():
+        total_states *= len(treasures_details['possible_locations'])
+
+    # treasures states
+    for _, marine_ships_details in initial['marine_ships'].items():
+        total_states *= len(marine_ships_details['path'])
+
+    total_states *= initial['turns to go']
+    print('Total states:', total_states)
+    return total_states
+
+
+def calculate_expected_distance(ship_location, treasure_details):
+    """
+    Calculate the expected distance from a pirate ship to a treasure,
+    considering the treasure's possible locations and probability to change location.
+    """
+    current_location = treasure_details['location']
+    possible_locations = treasure_details['possible_locations']
+    prob_change = treasure_details['prob_change_location']
+    location_probability = prob_change / len(possible_locations)
+    # Calculate the distance to the current location
+    distance_to_current = utils.distance(ship_location, current_location)
+    expected_distance = distance_to_current * (1 - prob_change + location_probability)
+    
+    # Calculate expected distances to possible locations
+    for loc in possible_locations:
+        if loc != current_location:  # Exclude the current location, already considered
+            distance = utils.distance(ship_location, loc)
+            expected_distance += distance * location_probability
+    
+    return expected_distance
+
+def find_closest_pirate_ship(state):
+    pirate_ships = state['pirate_ships']
+    treasures = state['treasures']
+    
+    # Initialize dictionary to hold the sum of expected distances for each pirate ship
+    sum_expected_distances = {ship: 0 for ship in pirate_ships}
+    
+    # Calculate the sum of expected distances from each pirate ship to each treasure
+    for ship, ship_details in pirate_ships.items():
+        ship_location = ship_details['location']
+        for treasure_details in treasures.values():
+            expected_distance = calculate_expected_distance(ship_location, treasure_details)
+            sum_expected_distances[ship] += expected_distance
+    
+    # Find the pirate ship with the smallest sum of expected distances to all treasures
+    closest_ship = min(sum_expected_distances, key=sum_expected_distances.get)
+    
+    return closest_ship
 
 class PirateAgent:
     def __init__(self, initial):
         self.initial = initial
+        self.strategy = self.choose_strategy()
+        if self.strategy == 'relaxed':
+            self.policy = OptimalPirateAgent(self.initial).policy
+        else:
+            raise NotImplemented
         
-
-
+    def choose_strategy(self):
+        if calc_total_states(self.initial) > THRESHOLD:
+            return 'relaxed'
+        else:
+            return 'normal'
+        
     def act(self, state):
-        raise NotImplemented
+        if self.strategy == 'relaxed':
+            return self.act_relaxed(state)
+        else:
+            return self.act_normal(state)
+
+    def act_relaxed(self, state):
+        closest_ship = find_closest_pirate_ship(state)
+        pass
+
+    def act_normal(self, state):
+        turn = state.pop('turns to go')
+        state_json = json.dumps(state)
+        return self.policy[state_json, turn]
 
 
 class InfinitePirateAgent:
