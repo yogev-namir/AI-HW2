@@ -45,6 +45,7 @@ class PirateStochasticProblem:
         start = time.perf_counter()
         self.agent = initiate_agent(deepcopy(self.state))
         end = time.perf_counter()
+        print(f"Constructor took {end - start} seconds")
         if end - start > INIT_TIME_LIMIT:
             logging.critical("timed out on constructor")
             raise TimeoutError
@@ -61,9 +62,10 @@ class PirateStochasticProblem:
             start = time.perf_counter()
             action = self.agent.act(deepcopy(self.state))
             end = time.perf_counter()
-            # if end - start > TURN_TIME_LIMIT:
-            #     logging.critical(f"timed out on an action")
-            #     raise TimeoutError
+            print(f"Round took {end - start} seconds")
+            if end - start > TURN_TIME_LIMIT:
+                logging.critical(f"timed out on an action")
+                raise TimeoutError
             if not self.is_action_legal(action):
                 logging.critical(f"You returned an illegal action!")
                 print(action)
@@ -278,6 +280,7 @@ def main():
             continue
     for an_input in additional_inputs:
         try:
+            print(an_input)
             my_problem = PirateStochasticProblem(an_input)
             my_problem.run_round()
         except EndOfGame:
