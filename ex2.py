@@ -384,9 +384,7 @@ class OptimalPirateAgent:
         self.possible_states_json, self.possible_states_dict = assemble_states(self.initial)
         self.next_actions_dict, self.next_states_dict = possible_next_states(self.possible_states_json,
                                                                              self.possible_states_dict, self.initial)
-        for k, v in self.next_states_dict.items():
-            if len(v) != 2:
-                print('errir')
+        
         self.policy, self.v_star = value_iterations(self.possible_states_json, self.next_actions_dict,
                                                     self.next_states_dict, self.turns_to_go)
 
