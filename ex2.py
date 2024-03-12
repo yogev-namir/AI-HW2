@@ -11,8 +11,10 @@ import utils
 CAPACITY = 2
 THRESHOLD = 1000000
 DEPOSIT_REWARD = 4
-RESET_REWARD = -2
+COLLECT_REWARD = 0.1
 CONFISCATE_REWARD = -1 
+WAIT_REWARD = -0.1
+RESET_REWARD = -2
 TERMINATE_REWARD = -10
 
 ids = ["318880754", "324079763"]
@@ -118,13 +120,13 @@ def check_collect_treasure(current_location, treasures, pirate_ship, capacity):
     if capacity == 0: return actions # Ship is full, no place for more treasures
     for treasure, treasure_details in treasures.items():
         if utils.distance(treasure_details['location'], current_location) == 1:
-            actions.append(("collect_treasure", pirate_ship, treasure))
+            actions.append(("collect", pirate_ship, treasure))
     return actions                       
 
 def check_deposit_treasure(current_location, pirate_ship, capacity, base):
     actions = []
     if capacity < CAPACITY and utils.distance(base, current_location) == 0:
-        actions.append(("deposit_treasure", pirate_ship))
+        actions.append(("deposit", pirate_ship))
     return actions
 
 
@@ -292,6 +294,8 @@ def calculate_reward_and_apply_action(state, actions_tuple):
     else:
         for action in actions_tuple:
             pirate_ship = action[1]
+            if action[0] == 'collect':
+                reward += COLLECT_REWARD   
             if action[0] == 'deposit_treasure':  
                 reward += (CAPACITY - state['pirate_ships'][pirate_ship]['capacity']) * DEPOSIT_REWARD
                 state['pirate_ships'][pirate_ship]['capacity'] = CAPACITY  
@@ -301,7 +305,10 @@ def calculate_reward_and_apply_action(state, actions_tuple):
                 confiscate = int(location in marine_ships_locations)
                 if confiscate:
                     state['pirate_ships'][pirate_ship]['capacity'] = CAPACITY
-                reward += confiscate * CONFISCATE_REWARD  
+                    reward += confiscate * CONFISCATE_REWARD  
+                elif action[0] == 'wait':
+                    reward += WAIT_REWARD
+                
     pirate_ships_part = {'pirate_ships': state['pirate_ships']}
     return pirate_ships_part, reward
 
@@ -386,6 +393,8 @@ def value_iterations(possible_states, next_actions_dict, next_states_dict, turns
     policy = {(state,0): None for state in possible_states}  # Initialize policy
     
     for turn in range(1, turns_to_go+1):
+        if turn == 100:
+            x=5
         for state in possible_states:
             # Compute the value for all possible actions and choose the one with the max value
             action_values = []
@@ -416,7 +425,8 @@ class OptimalPirateAgent:
     def act(self, state):
         turn = state.pop('turns to go')
         state_json = json.dumps(state)
-        return self.policy[state_json, turn]
+        best_action = self.policy[state_json, turn]
+        return best_action
 
 def calc_total_states(initial):
     total_states = 1
@@ -459,33 +469,109 @@ def calculate_expected_distance(ship_location, treasure_details):
     
     return expected_distance
 
-def find_closest_pirate_ship(state):
-    pirate_ships = state['pirate_ships']
-    treasures = state['treasures']
+
+def merge_clusters(clusters):
+    merged_treasures = {}
+
+    for cluster in clusters:
+        combined_locations = set()
+        total_prob_change = 0
+
+        for treasure, _ in cluster:
+            combined_locations.update(treasure['possible_locations'])
+            total_prob_change += treasure['prob_change_location']
+
+        # Create the merged treasure, the first one is the representative
+        cluster_id = cluster[0]
+        merged_treasures[cluster_id[1]] = {
+            "location": cluster_id[0]['location'],  
+            "possible_locations": tuple(combined_locations),
+            "prob_change_location": total_prob_change / len(cluster)
+        }
     
-    # Initialize dictionary to hold the sum of expected distances for each pirate ship
-    sum_expected_distances = {ship: 0 for ship in pirate_ships}
+    return merged_treasures
+
+
+def is_overlap_significant(treasure1, treasure2):
+    locations1 = set(treasure1['possible_locations'])
+    locations2 = set(treasure2['possible_locations'])
+    intersection = locations1.intersection(locations2)
+    union = locations1.union(locations2)
+    return len(intersection) >= 0.5 * len(union)
+
+
+def cluster_treasures(treasures):
+    # Initialize clusters and a set to keep track of clustered treasure IDs
+    clusters = []
+    clustered = set()
+
+    # Function to find or create a cluster for a new treasure
+    def find_or_create_cluster(new_treasure, new_treasur_id):
+        for cluster in clusters:
+            for _, treasure_id in cluster:
+                if is_overlap_significant(treasures[new_treasur_id], treasures[treasure_id]):
+                    cluster.append((new_treasure, new_treasur_id))
+                    return True
+        return False
+
+    for treasure, treasure_details in treasures.items():
+        if treasure not in clustered:
+            # Attempt to add the treasure to an existing cluster
+            if not find_or_create_cluster(treasure_details, treasure):
+                # If it doesn't fit in existing clusters, create a new one
+                clusters.append([(treasure_details, treasure)])
+            clustered.add(treasure)
+
+    return clusters
+
+
+def reducted_initial_state(initial):
+    initial = deepcopy(initial)
+
+    if len(initial['pirate_ships'])>1:
+        representative_pirate_ship = next(iter(initial['pirate_ships'].keys()), None)
+        initial['pirate_ships'] = {representative_pirate_ship: initial['pirate_ships'][representative_pirate_ship]}
     
-    # Calculate the sum of expected distances from each pirate ship to each treasure
-    for ship, ship_details in pirate_ships.items():
-        ship_location = ship_details['location']
-        for treasure_details in treasures.values():
-            expected_distance = calculate_expected_distance(ship_location, treasure_details)
-            sum_expected_distances[ship] += expected_distance
+    if len(initial['treasures'])>1:
+        reducted_treasures = merge_clusters(cluster_treasures(initial['treasures']))
+        initial['treasures'] = reducted_treasures
+        
+    return initial
+
+
+def expand_action_to_all_ships(state, action):
+    """
+    Expands the action of the closest ship to all pirate ships in the game.
+    Returns:
+    - A tuple of actions expanded to all pirate ships in the game.
+    """
+    if action == 'reset' or action == 'terminate':
+        return action
+    if len(state['pirate_ships']) == 1:
+        return action
+    # Extract the action and the ship identifier of the closest ship
+    atomic_action = action[0]
     
-    # Find the pirate ship with the smallest sum of expected distances to all treasures
-    closest_ship = min(sum_expected_distances, key=sum_expected_distances.get)
+    expanded_actions = []
     
-    return closest_ship
+    for pirate_ship in state['pirate_ships']:
+        if atomic_action[0] == 'wait':
+            expanded_actions.append((atomic_action[0], pirate_ship))
+        else:
+            expanded_actions.append((atomic_action[0], pirate_ship, atomic_action[2]))
+    # Convert the list of expanded actions into a tuple and return
+    return tuple(expanded_actions)
+
 
 class PirateAgent:
     def __init__(self, initial):
         self.initial = initial
         self.strategy = self.choose_strategy()
         if self.strategy == 'relaxed':
-            self.policy = OptimalPirateAgent(self.initial).policy
+            self.reducted_initial = reducted_initial_state(self.initial)
+            self.policy = OptimalPirateAgent(self.reducted_initial).policy
         else:
-            raise NotImplemented
+            self.policy = OptimalPirateAgent(self.initial).policy
         
     def choose_strategy(self):
         if calc_total_states(self.initial) > THRESHOLD:
@@ -494,19 +580,12 @@ class PirateAgent:
             return 'normal'
         
     def act(self, state):
-        if self.strategy == 'relaxed':
-            return self.act_relaxed(state)
-        else:
-            return self.act_normal(state)
-
-    def act_relaxed(self, state):
-        closest_ship = find_closest_pirate_ship(state)
-        pass
-
-    def act_normal(self, state):
         turn = state.pop('turns to go')
         state_json = json.dumps(state)
-        return self.policy[state_json, turn]
+        best_action = self.policy[state_json, turn]
+        if self.strategy == 'relaxed':
+            best_action = expand_action_to_all_ships(state, best_action)
+        return best_action
 
 
 class InfinitePirateAgent:
