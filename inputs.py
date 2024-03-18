@@ -39,5 +39,24 @@ small_inputs = [
         "marine_ships": {'marine_1': {"index": 0,
                                       "path": [(2, 3), (2, 3)]}},
         "turns to go": 100
-    }
+    },
+    # {
+    #     "optimal": True,
+    #     "infinite": False,
+    #     "map": [
+    #         ['B', 'S'],
+    #         ['S', 'S'],
+    #         ['S', 'I']
+    #     ],
+    #     "pirate_ships": {'pirate_ship_1': {"location": (0, 0),
+    #                                        "capacity": 2}
+    #                      },
+    #     "treasures": {'treasure_1': {"location": (2, 1),
+    #                                  "possible_locations": ((2, 1),),
+    #                                  "prob_change_location": 0.0}
+    #                   },
+    #     "marine_ships": {'marine_1': {"index": 0,
+    #                                   "path": [(1, 1)]}},
+    #     "turns to go": 7
+    # }
 ]

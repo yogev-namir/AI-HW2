@@ -3,6 +3,7 @@ import itertools
 import json
 import time
 import utils
+
 ################################
 # TODO: two pirate ships can be in the same location?
 # TODO: two marine ships can be in the same location?
@@ -11,20 +12,21 @@ import utils
 CAPACITY = 2
 THRESHOLD = 1000000
 DEPOSIT_REWARD = 4
-COLLECT_REWARD = 0.1
-CONFISCATE_REWARD = -1 
-WAIT_REWARD = -0.1
+CONFISCATE_REWARD = -1
 RESET_REWARD = -2
 TERMINATE_REWARD = -10
+LOST_TREASURES = -100
 
 ids = ["318880754", "324079763"]
+
 
 def find_base(map):
     for row_idx, row in enumerate(map):
         for col_idx, cell in enumerate(row):
             if cell == 'B':
                 return row_idx, col_idx
-            
+
+
 def classify_locations_in_map(map):
     i_locations, non_i_locations = [], []
     for row_idx, row in enumerate(map):
@@ -53,7 +55,7 @@ def assemble_states(initial):
     marine_ships = initial['marine_ships']
     map = initial['map']
     non_i_locations, i_locations = classify_locations_in_map(map)
-    
+
     pirate_ships_states = {}
     treasures_states = {}
     marine_ships_states = {}
@@ -63,37 +65,36 @@ def assemble_states(initial):
         for location in non_i_locations:
             # min_capacity = max(0,pirate_ship_details['capacity'] - len(initial_state['treasures']))
             # max_capacity = pirate_ship_details['capacity'] + 1
-            for capacity in range(0, CAPACITY+1):
+            for capacity in range(0, CAPACITY + 1):
                 pirate_ships_states[pirate_ship].append({"location": location,
                                                          "capacity": capacity})
-                
+
     for treasure, treasure_details in treasures.items():
         treasures_states[treasure] = []
         possible_locations = treasure_details['possible_locations']
         for location in possible_locations:
             treasures_states[treasure].append({"location": location,
-                                                "possible_locations": treasure_details['possible_locations'],
-                                                "prob_change_location": treasure_details['prob_change_location']})
-    
+                                               "possible_locations": treasure_details['possible_locations'],
+                                               "prob_change_location": treasure_details['prob_change_location']})
+
     for marine_ship, marine_ship_details in marine_ships.items():
         marine_ships_states[marine_ship] = []
         length = len(marine_ship_details['path'])
         for index in range(length):
             marine_ships_states[marine_ship].append({"index": index,
                                                      "path": marine_ship_details['path']})
-    
+
     pirate_ships_states = list(permutate_dicts(**pirate_ships_states))
     treasures_states = list(permutate_dicts(**treasures_states))
     marine_ships_states = list(permutate_dicts(**marine_ships_states))
 
-    
     all_states_raw = {"optimal": [initial_state['optimal']],
-                    "infinite": [initial_state['infinite']],
-                    "map": [map],
-                    "pirate_ships": pirate_ships_states,
-                    "treasures": treasures_states,
-                    "marine_ships": marine_ships_states}    
-    
+                      "infinite": [initial_state['infinite']],
+                      "map": [map],
+                      "pirate_ships": pirate_ships_states,
+                      "treasures": treasures_states,
+                      "marine_ships": marine_ships_states}
+
     if initial_state['infinite']:
         all_states_raw["gamma"] = [initial_state['gamma']]
 
@@ -107,7 +108,7 @@ def check_sail(current_location, pirate_ship, map):
     x, y = current_location
     num_rows, num_cols = len(map), len(map[0])
     directions = {"up": (-1, 0), "down": (1, 0), "left": (0, -1), "right": (0, 1)}
-    
+
     for (dx, dy) in directions.values():
         new_x, new_y = x + dx, y + dy
         # Check if new position is within map bounds and not 'I'
@@ -115,13 +116,16 @@ def check_sail(current_location, pirate_ship, map):
             actions.append(("sail", pirate_ship, (new_x, new_y)))
     return actions
 
+
 def check_collect_treasure(current_location, treasures, pirate_ship, capacity):
     actions = []
-    if capacity == 0: return actions # Ship is full, no place for more treasures
+    if capacity == 0:
+        return actions  # Ship is full, no place for more treasures
     for treasure, treasure_details in treasures.items():
         if utils.distance(treasure_details['location'], current_location) == 1:
             actions.append(("collect", pirate_ship, treasure))
-    return actions                       
+    return actions
+
 
 def check_deposit_treasure(current_location, pirate_ship, capacity, base):
     actions = []
@@ -155,35 +159,39 @@ def deterministic_result_state(current_state, action_tuple):
     # result_state = {"pirate_ships": result_state['pirate_ships']}
     return result_state, reward
 '''
+
+
 def deterministic_result_and_reward(current_state, action_tuple):
     result_state = deepcopy(current_state)
-    marine_ships_locations = get_marine_ship_locations_from_state(current_state)  
+    marine_ships_locations = get_marine_ship_locations_from_state(current_state)
     reward = 0
 
-    if action_tuple == 'reset': 
-        reward = RESET_REWARD  
+    if action_tuple == 'reset':
+        reward = RESET_REWARD
 
-    # change pirate ships states
+        # change pirate ships states
     for action in action_tuple:
         pirate_ship = action
         if action[0] == 'sail' or action[0] == 'wait':
-                location = action[2] if action[0] == 'sail' else current_state['pirate_ships'][pirate_ship]['location']
-                confiscate = int(location in marine_ships_locations)
-                if confiscate:
-                    current_state['pirate_ships'][pirate_ship]['capacity'] = CAPACITY
-                reward += confiscate * CONFISCATE_REWARD 
+            location = action[2] if action[0] == 'sail' else current_state['pirate_ships'][pirate_ship]['location']
+            confiscate = int(location in marine_ships_locations)
+            if confiscate:
+                current_state['pirate_ships'][pirate_ship]['capacity'] = CAPACITY
+            reward += confiscate * CONFISCATE_REWARD
 
-        elif action[0] == 'collect_treasure':
+        elif action[0] == 'collect':
             result_state['pirate_ships'][pirate_ship]['capacity'] -= 1
 
-        elif action[0] == 'deposit_treasure':
+        elif action[0] == 'deposit':
             result_state['pirate_ships'][pirate_ship]['capacity'] = CAPACITY
-            reward += (CAPACITY - current_state['pirate_ships'][pirate_ship]['capacity']) * DEPOSIT_REWARD 
+            reward += (CAPACITY - current_state['pirate_ships'][pirate_ship]['capacity']) * DEPOSIT_REWARD
 
-    # result_state = {"pirate_ships": result_state['pirate_ships']}
+            # result_state = {"pirate_ships": result_state['pirate_ships']}
     return result_state, reward
 
+
 import itertools
+
 
 def generate_permutations(state_entities):
     """
@@ -194,6 +202,7 @@ def generate_permutations(state_entities):
         entity_permutations = [({entity: state}, prob) for state, prob in states]
         permutations.append(entity_permutations)
     return list(itertools.product(*permutations))
+
 
 def combine_entity_permutations(treasure_permutations, marine_ship_permutations):
     """
@@ -219,29 +228,27 @@ def combine_entity_permutations(treasure_permutations, marine_ship_permutations)
 
     return combined_states
 
+
 def stochastic_combinations(treasures_states, marine_ships_states):
     # Generate permutations for treasures and marine ships
     treasure_permutations = generate_permutations(treasures_states)
     marine_ship_permutations = generate_permutations(marine_ships_states)
-    
+
     # Combine permutations between treasures and marine ships
     all_stochastic_combinations = combine_entity_permutations(treasure_permutations, marine_ship_permutations)
     return all_stochastic_combinations
 
 
 def stochastic_result_states(state):
-    marine_ships = state['marine_ships']
-    treasures = state['treasures']
-    
     treasures_states = {}
     marine_ships_states = {}
-    
+
     for treasure, treasure_details in state['treasures'].items():
         treasures_states[treasure] = []
         current_location = treasure_details['location']
         locations = treasure_details['possible_locations']
         prob = treasure_details['prob_change_location']
-        uniform_prob = prob/len(locations)
+        uniform_prob = prob / len(locations)
         for location in locations:
             probability = uniform_prob
             if location == current_location:
@@ -249,7 +256,7 @@ def stochastic_result_states(state):
             treasures_states[treasure].append(({"location": location,
                                                 "possible_locations": locations,
                                                 "prob_change_location": prob}, probability))
-                
+
     for marine_ship, marine_ship_details in state['marine_ships'].items():
         marine_ships_states[marine_ship] = []
         index = marine_ship_details['index']
@@ -259,17 +266,17 @@ def stochastic_result_states(state):
             probability = 1 / length
             for new_index in range(length):
                 marine_ships_states[marine_ship].append(({"index": new_index, "path": path}, probability))
-        elif length > 2: 
+        elif length > 2:
             if index == 0:
-                for new_index in [index, index+1]:
-                    marine_ships_states[marine_ship].append(({"index": new_index, "path": path}, 1/2))
-            elif index == length-1:
-                for new_index in [index, index-1]:
-                    marine_ships_states[marine_ship].append(({"index": new_index, "path": path}, 1/2))
+                for new_index in [index, index + 1]:
+                    marine_ships_states[marine_ship].append(({"index": new_index, "path": path}, 1 / 2))
+            elif index == length - 1:
+                for new_index in [index, index - 1]:
+                    marine_ships_states[marine_ship].append(({"index": new_index, "path": path}, 1 / 2))
             else:
-                for dx in [-1,0,1]:
-                    marine_ships_states[marine_ship].append(({"index": index+dx, "path": path}, 1/3))
-                    
+                for dx in [-1, 0, 1]:
+                    marine_ships_states[marine_ship].append(({"index": index + dx, "path": path}, 1 / 3))
+
     all_stochastic_combinations = stochastic_combinations(treasures_states, marine_ships_states)
     return all_stochastic_combinations
 
@@ -286,30 +293,35 @@ def get_marine_ship_locations_from_state(state):
 
 
 def calculate_reward_and_apply_action(state, actions_tuple):
+    new_state = deepcopy(state)
     reward = 0
     # state = deepcopy(state)
-    marine_ships_locations = get_marine_ship_locations_from_state(state)  
-    if actions_tuple == 'reset': 
-        reward = RESET_REWARD  
+    marine_ships_locations = get_marine_ship_locations_from_state(new_state)
+    if actions_tuple == 'reset':
+        reward = RESET_REWARD
     else:
         for action in actions_tuple:
             pirate_ship = action[1]
-            if action[0] == 'collect':
-                reward += COLLECT_REWARD   
-            if action[0] == 'deposit_treasure':  
-                reward += (CAPACITY - state['pirate_ships'][pirate_ship]['capacity']) * DEPOSIT_REWARD
-                state['pirate_ships'][pirate_ship]['capacity'] = CAPACITY  
+            pirate_ship_capacity = new_state['pirate_ships'][pirate_ship]['capacity']
+            if action[0] == 'deposit':
+                reward += (CAPACITY - pirate_ship_capacity) * DEPOSIT_REWARD
+                new_state['pirate_ships'][pirate_ship]['capacity'] = CAPACITY
 
             elif action[0] == 'sail' or action[0] == 'wait':
-                location = action[2] if action[0] == 'sail' else state['pirate_ships'][pirate_ship]['location']
-                confiscate = int(location in marine_ships_locations)
+                current_location = new_state['pirate_ships'][pirate_ship]['location']
+                new_location = action[2] if action[0] == 'sail' else current_location
+                new_state['pirate_ships'][pirate_ship]['location'] = new_location
+                confiscate = int(new_location in marine_ships_locations)
                 if confiscate:
-                    state['pirate_ships'][pirate_ship]['capacity'] = CAPACITY
-                    reward += confiscate * CONFISCATE_REWARD  
-                elif action[0] == 'wait':
-                    reward += WAIT_REWARD
-                
-    pirate_ships_part = {'pirate_ships': state['pirate_ships']}
+                    new_state['pirate_ships'][pirate_ship]['capacity'] = CAPACITY
+                if pirate_ship_capacity < CAPACITY:
+                    reward += confiscate * LOST_TREASURES
+                else:
+                    reward += confiscate * CONFISCATE_REWARD
+            elif action[0] == 'collect':
+                new_state['pirate_ships'][pirate_ship]['capacity'] -= 1
+
+    pirate_ships_part = {'pirate_ships': new_state['pirate_ships']}
     return pirate_ships_part, reward
 
 
@@ -320,9 +332,9 @@ def get_next_stochastic_states(current_state_json, current_state, action, initia
     """
     next_stochastic_states = []
     stochastic_state = {"optimal": current_state['optimal'],
-                                  "infinite": current_state['infinite'],
-                                  "map": current_state['map'],
-                                  }
+                        "infinite": current_state['infinite'],
+                        "map": current_state['map'],
+                        }
     if current_state['infinite']:
         stochastic_state["gamma"] = initial_state['gamma']
 
@@ -332,7 +344,7 @@ def get_next_stochastic_states(current_state_json, current_state, action, initia
     elif action == 'terminate':
         next_stochastic_states.append((current_state_json, 1))
         reward = TERMINATE_REWARD
-    
+
     else:
         # change pirate ships states
         pirate_ships_part, reward = calculate_reward_and_apply_action(current_state, action)
@@ -340,14 +352,13 @@ def get_next_stochastic_states(current_state_json, current_state, action, initia
 
         # change marine ships and treasures states
         all_stochastic_states = stochastic_result_states(current_state)
-        for (treasure_marine_permutaion, probability) in all_stochastic_states:
-            stochastic_state.update(treasure_marine_permutaion)
-            # reward = calculate_reward_and_alter_state(deterministic_state_part, action) # also handles encounters with Marine Ships
+        for (treasure_marine_permutation, probability) in all_stochastic_states:
+            stochastic_state.update(treasure_marine_permutation)
             next_stochastic_states.append((json.dumps(stochastic_state), probability))
 
     return (reward, next_stochastic_states)
-        
-    
+
+
 def get_next_actions(current_state, base):
     """
     returns:
@@ -361,12 +372,12 @@ def get_next_actions(current_state, base):
         capacity = pirate_ship_details['capacity']
         sail_actions = check_sail(current_location, pirate_ship, map)
         collect_treasure_actions = check_collect_treasure(current_location,
-                                                           treasures, pirate_ship, capacity)
+                                                          treasures, pirate_ship, capacity)
         deposit_treasure_actions = check_deposit_treasure(current_location, pirate_ship, capacity, base)
         actions[pirate_ship] = [('wait', pirate_ship)] + sail_actions + \
-                                collect_treasure_actions + deposit_treasure_actions
+                               collect_treasure_actions + deposit_treasure_actions
     all_actions_combinations = list(itertools.product(*actions.values()))
-    all_actions_combinations = all_actions_combinations + ['reset','terminate']
+    all_actions_combinations = all_actions_combinations + ['reset', 'terminate']
     return all_actions_combinations
 
 
@@ -375,13 +386,14 @@ def possible_next_states(states_json, states_dict, initial_state):
     next_states_dict = {}
     base = find_base(initial_state['map'])
     for state_json, state_dict in zip(states_json, states_dict):
-        next_actions_dict[state_json] = get_next_actions(state_dict, base) # tuples of possible actions for each pirate ship 
+        next_actions_dict[state_json] = get_next_actions(state_dict, base)  # tuples of possible actions for each pirate ship
         for action in next_actions_dict[state_json]:
-            next_states_dict[state_json, action] = get_next_stochastic_states(state_json, state_dict, action,initial_state)
+            next_states_dict[state_json, action] = get_next_stochastic_states(state_json, state_dict, action,
+                                                                              initial_state)
 
     return next_actions_dict, next_states_dict
 
-
+'''
 def value_iterations(possible_states, next_actions_dict, next_states_dict, turns_to_go):
     """
     Perform value iteration to find the optimal policy.
@@ -389,24 +401,56 @@ def value_iterations(possible_states, next_actions_dict, next_states_dict, turns
     - policy: a dictionary mapping states to the optimal action to take from that state.
     - V: a dictionary of state values.
     """
-    V = {(state,0): 0 for state in possible_states}  # Initialize value function
-    policy = {(state,0): None for state in possible_states}  # Initialize policy
-    
-    for turn in range(1, turns_to_go+1):
-        if turn == 100:
-            x=5
+    V = {(state, 0): 0 for state in possible_states}  # Initialize value function
+    policy = {(state, 0): None for state in possible_states}  # Initialize policy
+
+    for turn in range(1, turns_to_go + 1):
         for state in possible_states:
             # Compute the value for all possible actions and choose the one with the max value
+            next_actions = next_actions_dict[state]
             action_values = []
-            for action in next_actions_dict[state]:
+
+            for action in next_actions:
                 reward, next_states = next_states_dict[(state, action)]
-                action_value = reward + sum(prob * V[(next_state,turn-1)] for (next_state, prob) in next_states)
+                action_value = reward + sum(prob * V[(next_state, turn - 1)] for (next_state, prob) in next_states)
                 action_values.append((action_value, action))
-            best_value, best_action = max(action_values)
-            
-            V[(state,turn)] = best_value  # Update the value function
-            policy[(state,turn)] = best_action  # Update the policy
-    
+            best_value, best_action = max(action_values, key=lambda x: x[0])
+
+            V[(state, turn)] = best_value  # Update the value function
+            policy[(state, turn)] = best_action  # Update the policy
+    for v,p in zip(V.values(), policy.values()):
+        print(v)
+        print(p)
+    return policy, V
+'''
+def value_iterations(possible_states, next_actions_dict, next_states_dict, turns_to_go):
+    """
+    Perform value iteration to find the optimal policy.
+    Returns:
+    - policy: a dictionary mapping states to the optimal action to take from that state.
+    - V: a dictionary of state values.
+    """
+    V = {(state, 0): 0 for state in possible_states}  # Initialize value function
+    policy = {(state, 0): None for state in possible_states}  # Initialize policy
+
+    for turn in range(1, turns_to_go + 1):
+        for state in possible_states:
+            dict_state = json.loads(state)
+            # Compute the value for all possible actions and choose the one with the max value
+            next_actions = next_actions_dict[state]
+            action_values = []
+
+            for action in next_actions:
+                reward, next_states = next_states_dict[(state, action)]
+                for (next_state, prob) in next_states:
+                    reward += prob * V[(next_state, turn - 1)]
+                action_value = reward
+                action_values.append((action_value, action))
+            best_value, best_action = max(action_values, key=lambda x: x[0])
+
+            V[(state, turn)] = best_value  # Update the value function
+            policy[(state, turn)] = best_action  # Update the policy
+
     return policy, V
 
 
@@ -418,23 +462,24 @@ class OptimalPirateAgent:
         self.possible_states_json, self.possible_states_dict = assemble_states(self.initial)
         self.next_actions_dict, self.next_states_dict = possible_next_states(self.possible_states_json,
                                                                              self.possible_states_dict, self.initial)
-        
+
         self.policy, self.v_star = value_iterations(self.possible_states_json, self.next_actions_dict,
                                                     self.next_states_dict, self.turns_to_go)
 
     def act(self, state):
         turn = state.pop('turns to go')
         state_json = json.dumps(state)
-        best_action = self.policy[state_json, turn]
+        best_action = self.policy[(state_json, turn)]
         return best_action
+
 
 def calc_total_states(initial):
     total_states = 1
     non_i_locations, i_locations = classify_locations_in_map(initial['map'])
-    
+
     # pirate ships states
     total_states *= len(initial['pirate_ships'].items()) * CAPACITY * len(non_i_locations)
-    
+
     # treasures states
     for _, treasures_details in initial['treasures'].items():
         total_states *= len(treasures_details['possible_locations'])
@@ -460,13 +505,13 @@ def calculate_expected_distance(ship_location, treasure_details):
     # Calculate the distance to the current location
     distance_to_current = utils.distance(ship_location, current_location)
     expected_distance = distance_to_current * (1 - prob_change + location_probability)
-    
+
     # Calculate expected distances to possible locations
     for loc in possible_locations:
         if loc != current_location:  # Exclude the current location, already considered
             distance = utils.distance(ship_location, loc)
             expected_distance += distance * location_probability
-    
+
     return expected_distance
 
 
@@ -484,11 +529,11 @@ def merge_clusters(clusters):
         # Create the merged treasure, the first one is the representative
         cluster_id = cluster[0]
         merged_treasures[cluster_id[1]] = {
-            "location": cluster_id[0]['location'],  
+            "location": cluster_id[0]['location'],
             "possible_locations": tuple(combined_locations),
             "prob_change_location": total_prob_change / len(cluster)
         }
-    
+
     return merged_treasures
 
 
@@ -528,14 +573,14 @@ def cluster_treasures(treasures):
 def reducted_initial_state(initial):
     initial = deepcopy(initial)
 
-    if len(initial['pirate_ships'])>1:
+    if len(initial['pirate_ships']) > 1:
         representative_pirate_ship = next(iter(initial['pirate_ships'].keys()), None)
         initial['pirate_ships'] = {representative_pirate_ship: initial['pirate_ships'][representative_pirate_ship]}
-    
-    if len(initial['treasures'])>1:
+
+    if len(initial['treasures']) > 1:
         reducted_treasures = merge_clusters(cluster_treasures(initial['treasures']))
         initial['treasures'] = reducted_treasures
-        
+
     return initial
 
 
@@ -551,9 +596,9 @@ def expand_action_to_all_ships(state, action):
         return action
     # Extract the action and the ship identifier of the closest ship
     atomic_action = action[0]
-    
+
     expanded_actions = []
-    
+
     for pirate_ship in state['pirate_ships']:
         if atomic_action[0] == 'wait':
             expanded_actions.append((atomic_action[0], pirate_ship))
@@ -572,13 +617,13 @@ class PirateAgent:
             self.policy = OptimalPirateAgent(self.reducted_initial).policy
         else:
             self.policy = OptimalPirateAgent(self.initial).policy
-        
+
     def choose_strategy(self):
         if calc_total_states(self.initial) > THRESHOLD:
             return 'relaxed'
         else:
             return 'normal'
-        
+
     def act(self, state):
         turn = state.pop('turns to go')
         state_json = json.dumps(state)
