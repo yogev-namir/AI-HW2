@@ -61,6 +61,7 @@ class PirateStochasticProblem:
         while self.state["turns to go"]:
             start = time.perf_counter()
             action = self.agent.act(deepcopy(self.state))
+            print(action)
             end = time.perf_counter()
             # if end - start > TURN_TIME_LIMIT:
             #     logging.critical(f"timed out on an action")

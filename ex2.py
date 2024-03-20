@@ -12,6 +12,7 @@ import utils
 CAPACITY = 2
 THRESHOLD = 1000000
 DEPOSIT_REWARD = 4
+WAIT_PENALTY = 0.0001
 CONFISCATE_REWARD = -1
 RESET_REWARD = -2
 TERMINATE_REWARD = -10
@@ -308,16 +309,18 @@ def calculate_reward_and_apply_action(state, actions_tuple):
                 new_state['pirate_ships'][pirate_ship]['capacity'] = CAPACITY
 
             elif action[0] == 'sail' or action[0] == 'wait':
+                if action[0] == 'wait':
+                    reward += WAIT_PENALTY
                 current_location = new_state['pirate_ships'][pirate_ship]['location']
                 new_location = action[2] if action[0] == 'sail' else current_location
                 new_state['pirate_ships'][pirate_ship]['location'] = new_location
                 confiscate = int(new_location in marine_ships_locations)
                 if confiscate:
                     new_state['pirate_ships'][pirate_ship]['capacity'] = CAPACITY
-                if pirate_ship_capacity < CAPACITY:
-                    reward += confiscate * LOST_TREASURES
-                else:
-                    reward += confiscate * CONFISCATE_REWARD
+                    reward += CONFISCATE_REWARD
+                    if pirate_ship_capacity < CAPACITY:
+                        reward += LOST_TREASURES
+
             elif action[0] == 'collect':
                 new_state['pirate_ships'][pirate_ship]['capacity'] -= 1
 
@@ -386,12 +389,14 @@ def possible_next_states(states_json, states_dict, initial_state):
     next_states_dict = {}
     base = find_base(initial_state['map'])
     for state_json, state_dict in zip(states_json, states_dict):
-        next_actions_dict[state_json] = get_next_actions(state_dict, base)  # tuples of possible actions for each pirate ship
+        next_actions_dict[state_json] = get_next_actions(state_dict,
+                                                         base)  # tuples of possible actions for each pirate ship
         for action in next_actions_dict[state_json]:
             next_states_dict[state_json, action] = get_next_stochastic_states(state_json, state_dict, action,
                                                                               initial_state)
 
     return next_actions_dict, next_states_dict
+
 
 '''
 def value_iterations(possible_states, next_actions_dict, next_states_dict, turns_to_go):
@@ -423,6 +428,8 @@ def value_iterations(possible_states, next_actions_dict, next_states_dict, turns
         print(p)
     return policy, V
 '''
+
+
 def value_iterations(possible_states, next_actions_dict, next_states_dict, turns_to_go):
     """
     Perform value iteration to find the optimal policy.
@@ -571,20 +578,89 @@ def cluster_treasures(treasures):
 
 
 def reducted_initial_state(initial):
-    initial = deepcopy(initial)
+    initial_copy = deepcopy(initial)
+    unpicked_pirate_ships = None
+    representative_pirate_ship = next(iter(initial_copy['pirate_ships'].keys()), None)
+    best_treasure = next(iter(initial_copy['treasures'].keys()), None)
 
-    if len(initial['pirate_ships']) > 1:
-        representative_pirate_ship = next(iter(initial['pirate_ships'].keys()), None)
-        initial['pirate_ships'] = {representative_pirate_ship: initial['pirate_ships'][representative_pirate_ship]}
+    if len(initial_copy['pirate_ships']) > 1:
+        representative_pirate_ship = next(iter(initial_copy['pirate_ships'].keys()), None)
+        unpicked_pirate_ships = {k: v for k, v in initial_copy['pirate_ships'].items() if
+                                 k != representative_pirate_ship}
+        initial_copy['pirate_ships'] = {
+            representative_pirate_ship: initial_copy['pirate_ships'][representative_pirate_ship]}
 
-    if len(initial['treasures']) > 1:
+    if len(initial_copy['treasures']) > 1:
+        '''
+        # option 1
         reducted_treasures = merge_clusters(cluster_treasures(initial['treasures']))
         initial['treasures'] = reducted_treasures
+        '''
+        # option 2
+        pirate_ship_location = initial_copy['pirate_ships'][representative_pirate_ship]['location']
+        best_treasure = find_best_treasure(pirate_ship_location=pirate_ship_location,
+                                           treasures=initial_copy['treasures'])
+        initial_copy['treasures'] = {best_treasure: initial_copy['treasures'][best_treasure]}
 
-    return initial
+    return initial_copy, unpicked_pirate_ships, representative_pirate_ship, best_treasure
 
 
-def expand_action_to_all_ships(state, action):
+def find_best_treasure(pirate_ship_location, treasures):
+    # Calculate inertia for each treasure: sum of squared distances between current location and possible locations
+    inertia_values = {}
+
+    for treasure, properties in treasures.items():
+        current_location = properties["location"]
+        possible_locations = properties["possible_locations"]
+        squared_distances = [utils.distance(current_location, loc) ** 2 for loc in possible_locations]
+        inertia = sum(squared_distances)
+        inertia_values[treasure] = inertia
+
+    # Calculate the stability score for each treasure: lower score indicates higher stability
+    stability_scores = {}
+
+    for treasure, properties in treasures.items():
+        prob_change_location = properties["prob_change_location"]
+        inertia = inertia_values[treasure]
+        # Stability score based on probability of changing location and inertia
+        stability_score = prob_change_location * inertia
+        stability_scores[treasure] = stability_score
+
+    # Calculate the centroid (mean location) of possible locations for each treasure
+    centroid_locations = {}
+
+    for treasure, properties in treasures.items():
+        possible_locations = properties["possible_locations"]
+        x_coords = [loc[0] for loc in possible_locations]
+        y_coords = [loc[1] for loc in possible_locations]
+        centroid_x = sum(x_coords) / len(x_coords)
+        centroid_y = sum(y_coords) / len(y_coords)
+        centroid_locations[treasure] = (centroid_x, centroid_y)
+
+    # Calculate the distance from the pirate ship to each treasure's centroid location
+    distances_from_ship_to_centroid = {}
+
+    for treasure, centroid_location in centroid_locations.items():
+        distance_from_ship_to_centroid = utils.distance(pirate_ship_location, centroid_location)
+        distances_from_ship_to_centroid[treasure] = distance_from_ship_to_centroid
+
+    # Assuming equal importance for both factors (alpha = beta = 1)
+    alpha = 1
+    beta = 1
+
+    # Calculate total score for each treasure
+    total_scores = {}
+
+    for treasure in treasures.keys():
+        total_score = alpha * stability_scores[treasure] + beta * distances_from_ship_to_centroid[treasure]
+        total_scores[treasure] = total_score
+
+    # Find the treasure with the lowest total score
+    best_treasure = min(total_scores, key=total_scores.get)
+    return best_treasure
+
+
+def expand_action_to_all_ships(state, action, unpicked_pirate_ships):
     """
     Expands the action of the closest ship to all pirate ships in the game.
     Returns:
@@ -592,15 +668,15 @@ def expand_action_to_all_ships(state, action):
     """
     if action == 'reset' or action == 'terminate':
         return action
-    if len(state['pirate_ships']) == 1:
+    if unpicked_pirate_ships is None:
         return action
     # Extract the action and the ship identifier of the closest ship
     atomic_action = action[0]
 
-    expanded_actions = []
+    expanded_actions = [atomic_action]
 
-    for pirate_ship in state['pirate_ships']:
-        if atomic_action[0] == 'wait':
+    for pirate_ship in unpicked_pirate_ships.keys():
+        if len(atomic_action) == 2:
             expanded_actions.append((atomic_action[0], pirate_ship))
         else:
             expanded_actions.append((atomic_action[0], pirate_ship, atomic_action[2]))
@@ -613,7 +689,8 @@ class PirateAgent:
         self.initial = initial
         self.strategy = self.choose_strategy()
         if self.strategy == 'relaxed':
-            self.reducted_initial = reducted_initial_state(self.initial)
+            self.reducted_initial, self.unpicked_pirate_ships, \
+                self.representative_pirate_ship, self.best_treasure = reducted_initial_state(self.initial)
             self.policy = OptimalPirateAgent(self.reducted_initial).policy
         else:
             self.policy = OptimalPirateAgent(self.initial).policy
@@ -626,11 +703,65 @@ class PirateAgent:
 
     def act(self, state):
         turn = state.pop('turns to go')
-        state_json = json.dumps(state)
-        best_action = self.policy[state_json, turn]
         if self.strategy == 'relaxed':
-            best_action = expand_action_to_all_ships(state, best_action)
+            state = self.minimize_state(state)
+        state_json = json.dumps(state)
+        best_action = self.policy[(state_json, turn)]
+        if self.strategy == 'relaxed':
+            best_action = expand_action_to_all_ships(state, best_action, self.unpicked_pirate_ships)
         return best_action
+
+    def minimize_state(self, state):
+        state = deepcopy(state)
+        state['pirate_ships'] = {self.representative_pirate_ship:
+                                     state['pirate_ships'][self.representative_pirate_ship]}
+        state['treasures'] = {self.best_treasure:
+                                  state['treasures'][self.best_treasure]}
+        return state
+
+
+def value_iteration_infinite(possible_states, next_actions_dict, next_states_dict, gamma, threshold=0.01):
+    """
+    Perform value iteration for an infinite number of turns.
+    Args:
+    - possible_states: a list of possible states
+    - next_actions_dict: a dictionary mapping states to possible actions
+    - next_states_dict: a dictionary mapping (state, action) pairs to lists of (next_state, probability, reward) tuples
+    - gamma: the discount factor for future rewards
+    - threshold: the convergence threshold
+
+    Returns:
+    - policy: a dictionary mapping states to the optimal action to take from that state.
+    - V: a dictionary of state values.
+    """
+    V = {state: 0 for state in possible_states}  # Initialize value function
+    policy = {state: None for state in possible_states}  # Initialize policy
+    while True:
+        delta = 0  # Initialize the maximum change in value function to zero
+        for state in possible_states:
+            # Compute the value for all possible actions and choose the one with the max value
+            next_actions = next_actions_dict[state]
+            action_values = []
+
+            for action in next_actions:
+                total_reward = 0
+                next_states = next_states_dict[(state, action)]
+                for (next_state, prob, reward) in next_states:
+                    total_reward += prob * (reward + gamma * V[next_state])
+                action_values.append((total_reward, action))
+
+            best_value, best_action = max(action_values, key=lambda x: x[0])
+
+            # Track the maximum change in the value function
+            delta = max(delta, abs(best_value - V[state]))
+            V[state] = best_value  # Update the value function
+            policy[state] = best_action  # Update the policy
+
+        # Check for convergence
+        if delta < threshold:
+            break
+
+    return policy, V
 
 
 class InfinitePirateAgent:
